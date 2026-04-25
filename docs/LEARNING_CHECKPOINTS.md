@@ -73,7 +73,48 @@ When you pass a password as a CLI argument (e.g., `psql "postgresql://user:pass@
 
 ## Phase 2b — Kafka on Kubernetes (Strimzi Operator)
 
-*To be added*
+**Concepts covered:** Custom Resource Definitions (CRDs), Custom Resources (CRs), the operator pattern, Strimzi, KRaft mode, KafkaNodePool, replication factor vs min.insync.replicas, headless Services, bootstrap Services, Strimzi version compatibility windows.
+
+### Q1. What's the difference between a CRD and a CR?
+
+A **CRD (Custom Resource Definition)** extends the Kubernetes API with a new resource type. Strimzi's CRDs add `Kafka`, `KafkaTopic`, `KafkaUser`, etc. to your cluster.
+
+A **CR (Custom Resource)** is an instance of that type. Your `stock-kafka` is a Kafka CR, your `stock-prices` is a KafkaTopic CR.
+
+Analogy: CRD is the class definition, CR is the object instance.
+
+### Q2. What does an operator actually do?
+
+An operator is a deployment that runs a controller loop in the cluster. The loop watches CRs of a specific type and continuously reconciles reality with the spec. If you write `replicas: 3` in a Kafka CR but only 2 broker pods exist, the operator notices the diff and creates the missing pod. If a broker pod dies, the operator brings it back. It encodes operational knowledge as code.
+
+### Q3. Why use KRaft mode instead of Zookeeper?
+
+KRaft (KIP-500) replaces Zookeeper with Kafka's own Raft-based consensus protocol. Benefits:
+- One fewer system to operate
+- Faster controller failover (seconds vs minutes)
+- Simpler ops, smaller resource footprint
+- Zookeeper is officially removed in Kafka 4.0
+
+For new deployments in 2026, KRaft is the only reasonable choice.
+
+### Q4. What's the difference between `replication.factor` and `min.insync.replicas`?
+
+- **replication.factor**: how many copies of each partition exist across brokers. We set 3.
+- **min.insync.replicas**: how many replicas must acknowledge a write before the producer considers it successful. We set 2.
+
+With 3/2, the cluster survives 1 broker failure without data loss or write failures. If 2 brokers fail, writes pause until at least 2 are healthy again — preserves consistency over availability.
+
+### Q5. What's a headless service and why does Kafka use one?
+
+A headless service has `clusterIP: None`. Instead of a single virtual IP that load-balances, it creates one DNS A-record per pod (e.g., `stock-kafka-dual-role-0.stock-kafka-kafka-brokers.kafka.svc.cluster.local`). Kafka clients need direct access to specific brokers (each broker owns specific partitions), so the headless service gives clients per-broker DNS. The bootstrap service handles the initial connection, then clients are told which brokers to talk to for which partitions.
+
+### Q6. Why did Strimzi create one PVC per broker, but our Postgres StatefulSet had `volumeClaimTemplates`?
+
+Same idea, different syntax. Strimzi's `KafkaNodePool` does the volumeClaimTemplates expansion for you internally. Both produce a unique PVC per replica (e.g., `data-stock-kafka-dual-role-0/1/2`). The operator pattern hides the StatefulSet plumbing while still using StatefulSets under the hood.
+
+### Q7. What happened with the Kafka 3.8.0 version error?
+
+Strimzi 0.51.0 only supports Kafka 4.1.0, 4.1.1, and 4.2.0 — older Kafka versions are dropped from each new operator release. Production teams pin both the operator version and the Kafka version explicitly to avoid this. Lesson: when using a "latest" install URL, always check what versions that release actually supports before writing your CRs.
 
 ---
 
