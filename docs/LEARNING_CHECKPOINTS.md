@@ -178,3 +178,44 @@ Questions that came up across phases, organized by topic.
 
 ### AWS-specific
 *To be filled in*
+---
+
+## Project Framing & Communication
+
+How to describe this project in interviews, resumes, LinkedIn, and portfolio writeups. Important: framing matters as much as the technical work.
+
+### Q1. Should I call this a "cloud migration" project?
+
+**No.** A migration implies moving a production workload from one environment to another with continuity goals — uptime SLAs, cutover plans, rollback strategies, user impact. None of those exist here.
+
+Better framings:
+
+- **"Cloud-native re-architecture"** — accurate and signals senior-level thinking
+- **"Productionization"** — emphasizes the move from PoC to production patterns
+- **"Platform engineering project"** — highlights the infrastructure focus
+- **"Reference implementation"** or **"greenfield cloud-native build"** — also valid
+
+### Q2. How should I describe the relationship between v1 and v2?
+
+> "v1 of this project (Real-Time Stock Pipeline, Docker Compose) proved the streaming architecture worked end-to-end. v2 rebuilds the same logical system — Python producer, Kafka, Spark Structured Streaming, Postgres, Grafana — as a cloud-native deployment to demonstrate production patterns: Kubernetes operators, Terraform-managed AWS infrastructure, and CI/CD with OIDC authentication."
+
+This is accurate AND shows progression of thinking, which is what senior interviewers actually want to see.
+
+### Q3. What's a strong resume bullet for this project?
+
+> "Designed and deployed a real-time data pipeline on AWS EKS using Kubernetes operators (Strimzi for Kafka, Spark Operator), Terraform for IaC, and GitHub Actions OIDC for CI/CD."
+
+Avoid: "Migrated stock pipeline to AWS." That sounds like lift-and-shift.
+
+### Q4. When IS "migration" the right word?
+
+When you actually do one in a real job — moving a live production workload with users, uptime requirements, and rollback plans. The hard parts of a migration (dual-writes, cutover, monitoring during transition, blast-radius mitigation) don't exist on a portfolio project, which is why the word doesn't fit. Save it for the real thing.
+
+### Q5. What questions might recruiters ask if I overclaim "migration"?
+
+- "How did you handle dual-writes during cutover?"
+- "What was the rollback plan?"
+- "What was the user impact and how did you measure it?"
+- "What was the data validation strategy between old and new systems?"
+
+If you can't answer these in detail, the project sounds inflated. Honest framing as "re-architecture" sidesteps these questions because the answer is "this was a greenfield build."
