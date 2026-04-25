@@ -57,6 +57,18 @@ Principle of least privilege. Databases should never be exposed outside the clus
 
 `postgres.data.svc.cluster.local` (or the short form `postgres.data`). The full DNS pattern is `<service-name>.<namespace>.svc.cluster.local`. Services in the same namespace can use just `postgres`.
 
+### Q6. What happens when I `kubectl delete pod postgres-0` in a StatefulSet?
+
+The StatefulSet controller immediately recreates the pod with the same name. The new pod re-attaches to the existing PVC (`postgres-data-postgres-0`) and finds the data exactly where the previous pod left it. Restart counter resets to 0 because it's technically a new pod, not a restart of the existing one.
+
+### Q7. Why did kubectl warn about credentials being recorded in container logs?
+
+When you pass a password as a CLI argument (e.g., `psql "postgresql://user:pass@..."`), the full command line gets logged in the container's stdout — which Kubernetes captures and stores. This is fine for local dev, but in production credentials should come from environment variables sourced from Secrets, never from CLI arguments. This is one of the reasons production deployments use Sealed Secrets, External Secrets Operator, or AWS Secrets Manager.
+
+### Q8. What's the practical difference between `kubectl exec -it` and `kubectl run --rm -it`?
+
+- `kubectl exec` runs a command inside an *existing* pod. Used for debugging or one-off queries against a running app.
+- `kubectl run` creates a brand new ephemeral pod, runs the command, and (with `--rm`) deletes the pod when done. Used for ad-hoc tooling that doesn't have a permanent home in the cluster.
 ---
 
 ## Phase 2b — Kafka on Kubernetes (Strimzi Operator)
