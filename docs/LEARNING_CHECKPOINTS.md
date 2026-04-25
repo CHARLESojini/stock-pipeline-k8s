@@ -132,7 +132,69 @@ Lesson: in a real cluster with traffic, this would cause dropped writes and angr
 
 ## Phase 2c — Spark on Kubernetes
 
-*To be added*
+**Concepts covered:** Spark Operator (CRD pattern), Spark on K8s scheduler, custom Docker images, local container registries with kind, Spark Structured Streaming, watermarking, foreachBatch sink pattern, dual-sink streaming, JDBC connectors, cross-namespace DNS in practice, Helm chart value drift between versions.
+
+### Q1. How does Spark on Kubernetes actually work — what's the lifecycle?
+
+The Spark Operator watches `SparkApplication` CRs. When you apply one:
+1. Operator validates the spec via its admission webhook
+2. Operator runs `spark-submit` with K8s scheduler backend args
+3. spark-submit creates the **driver pod** in the target namespace
+4. The driver pod's main process runs your Python `main()`
+5. The driver internally calls the K8s API to create **executor pods** (this is why we needed RBAC in Phase 2c)
+6. Executors register back to the driver via NettyRPC
+7. Driver hands tasks to executors; executors run them, send results back
+8. When the SparkApplication ends, the operator cleans up all pods
+
+The driver is the only thing the operator creates directly. The executors are created BY the driver — that's why the driver needs RBAC permissions to create pods.
+
+### Q2. Why did we need a local container registry?
+
+Kind cluster nodes are containers themselves, with their own filesystems. Even though Docker is running everything on your Mac, the kind nodes can't reach into your laptop's local Docker image cache. We need an intermediary "post office" — a registry that both your build tool and the kind nodes can talk to.
+
+`docker run registry:2 -p 5001:5000` spins up a tiny registry. We connect it to the same Docker network as kind. We then patch each kind node's containerd config to know `localhost:5001` redirects to the `kind-registry` container internally.
+
+### Q3. What does `foreachBatch` do, and when should I use it?
+
+Spark's built-in writers (Parquet, JSON, Kafka) handle micro-batch persistence automatically. But Postgres via JDBC isn't a native streaming sink — Spark's continuous mode doesn't know how to maintain a JDBC connection across micro-batches.
+
+`foreachBatch` is the escape hatch: Spark hands you the batch DataFrame, you write it however you want using the regular batch DataFrame writer. It's the standard pattern for streaming-to-anything-without-a-native-sink (databases, REST APIs, custom queues).
+
+### Q4. What's a watermark in Spark streaming?
+
+A watermark is the maximum lateness Spark tolerates. We set `withWatermark("event_time", "2 minutes")` meaning: "If a record arrives more than 2 minutes after its window has closed, drop it instead of reopening that window."
+
+Without watermarks, Spark would have to keep ALL windows in memory forever in case a 10-year-old message shows up. Watermarks let Spark close out old windows and free memory.
+
+### Q5. Why are aggregations using `outputMode("update")`?
+
+Three modes:
+- `append`: only emit final, completed windows. Wait until watermark passes the window-end + watermark-delay.
+- `complete`: emit every window every batch. Huge — only for small aggregations.
+- `update`: emit only the windows that CHANGED in this batch.
+
+We use `update` because late data within the watermark can update a window's running avg, and we want to see those updates emitted to Postgres immediately (not wait for the window to fully close).
+
+### Q6. Why did Helm say "Upgrade complete" but the operator's pod args didn't change?
+
+The Helm chart's `values.yaml` schema changed between versions. The old key `sparkJobNamespaces` (Helm chart v1.x) was renamed to `spark.jobNamespaces` (v2.x). Helm doesn't error on unknown keys — it silently ignores them. So `helm upgrade --set sparkJobNamespaces=...` succeeded but actually configured nothing.
+
+Lesson: after every operator install, verify the running pod's actual args (`kubectl describe pod` or grep logs for the launch command). Don't trust `helm get values` — it shows what YOU passed, not what the chart actually consumed.
+
+This is the #1 portfolio-grade Helm gotcha.
+
+### Q7. What's the practical difference between cluster mode and client mode?
+
+- **client mode**: the driver runs on your laptop / wherever you ran `spark-submit`. Useful for interactive REPL/notebook usage.
+- **cluster mode**: the driver runs as a pod inside the cluster. Production pattern — driver and executors share infrastructure, networking, lifecycle.
+
+For batch and streaming jobs, always use cluster mode. Client mode is only for debugging.
+
+### Q8. Why does the Spark image need to ship with the Kafka JAR and Postgres JDBC driver?
+
+Spark's classpath at runtime is exactly what's in `/opt/spark/jars/` inside the image. The Kafka source connector and Postgres JDBC driver aren't part of the base Spark image — they're separate Maven artifacts. The Dockerfile downloads them at build time so they're baked into the image.
+
+The alternative is `--packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3` which downloads at runtime — but that fails in air-gapped environments and slows startup. Bake them into the image.
 
 ---
 
