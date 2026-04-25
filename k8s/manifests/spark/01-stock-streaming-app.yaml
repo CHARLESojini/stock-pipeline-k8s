@@ -1,0 +1,29 @@
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: stock-streaming
+  namespace: spark-jobs
+spec:
+  type: Python
+  pythonVersion: "3"
+  mode: cluster
+  image: "localhost:5001/stock-streaming:v1"
+  imagePullPolicy: Always
+  mainApplicationFile: local:///opt/spark/app/stock_streaming.py
+  sparkVersion: "3.5.3"
+  restartPolicy:
+    type: Never
+  driver:
+    cores: 1
+    memory: "1g"
+    serviceAccount: spark-driver
+    labels:
+      version: "3.5.3"
+      app: stock-streaming
+  executor:
+    cores: 1
+    instances: 2
+    memory: "512m"
+    labels:
+      version: "3.5.3"
+      app: stock-streaming

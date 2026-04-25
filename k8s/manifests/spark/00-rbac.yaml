@@ -1,0 +1,31 @@
+# ServiceAccount for Spark driver pods.
+# The driver needs permission to create/manage executor pods in this namespace.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spark-driver
+  namespace: spark-jobs
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spark-driver-role
+  namespace: spark-jobs
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "configmaps", "services", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spark-driver-rb
+  namespace: spark-jobs
+subjects:
+  - kind: ServiceAccount
+    name: spark-driver
+    namespace: spark-jobs
+roleRef:
+  kind: Role
+  name: spark-driver-role
+  apiGroup: rbac.authorization.k8s.io
