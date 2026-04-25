@@ -116,6 +116,18 @@ Same idea, different syntax. Strimzi's `KafkaNodePool` does the volumeClaimTempl
 
 Strimzi 0.51.0 only supports Kafka 4.1.0, 4.1.1, and 4.2.0 — older Kafka versions are dropped from each new operator release. Production teams pin both the operator version and the Kafka version explicitly to avoid this. Lesson: when using a "latest" install URL, always check what versions that release actually supports before writing your CRs.
 
+### Q8. Why is "delete all 3 brokers at once" a bad idea?
+
+In a Kafka cluster with replication factor 3 and `min.insync.replicas: 2`, you need at least 2 brokers online at all times for writes to succeed. Deleting all 3 simultaneously means:
+
+- **Zero in-sync replicas** — all writes pause
+- **Controller election deadlock risk** — KRaft needs a quorum of controllers online to elect a leader; with all gone, the cluster bootstraps from disk and may take longer to recover
+- **Potential split-brain on recovery** — if brokers come back at different times with diverging local state
+
+In production, you ALWAYS do **rolling restarts**: delete one broker, wait for it to rejoin and become an in-sync replica (ISR), then move to the next. Strimzi handles this for you when you change the cluster spec; manual `kubectl delete` bypasses that safety.
+
+Lesson: in a real cluster with traffic, this would cause dropped writes and angry users. On a kind cluster with no traffic, the operator pattern saved me — Strimzi rebuilt brokers in sequence (visible in the staggered pod ages) even though they were deleted simultaneously.
+
 ---
 
 ## Phase 2c — Spark on Kubernetes
