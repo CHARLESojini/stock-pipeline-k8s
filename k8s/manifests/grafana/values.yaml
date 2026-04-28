@@ -1,0 +1,65 @@
+# Grafana Helm chart values for stock-pipeline-k8s
+# https://github.com/grafana/helm-charts/tree/main/charts/grafana
+
+# Admin credentials — for production, use existingSecret instead
+adminUser: admin
+adminPassword: admin  # CHANGE in production / use existingSecret
+initChownData:
+  enabled: false
+
+# Resource limits
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Persistent storage so dashboards survive pod restarts
+persistence:
+  enabled: true
+  type: pvc
+  size: 5Gi
+
+# Service — ClusterIP, we'll port-forward locally
+service:
+  type: ClusterIP
+  port: 80
+
+# Datasource provisioning — pre-configures Postgres connection at startup
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Postgres
+        type: postgres
+        access: proxy
+        url: postgres.data.svc.cluster.local:5432
+        database: stock_data
+        user: stockuser
+        secureJsonData:
+          password: PLACEHOLDER_OVERRIDE_AT_DEPLOY
+        jsonData:
+          sslmode: disable
+          postgresVersion: 1500
+          timescaledb: false
+        isDefault: true
+        editable: true
+
+# Default dashboard provisioning — we'll mount our own
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: 'default'
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/default
+
+# Plugins (none needed for now)
+plugins: []
