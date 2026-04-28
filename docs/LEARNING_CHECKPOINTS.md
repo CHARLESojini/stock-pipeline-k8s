@@ -200,7 +200,86 @@ The alternative is `--packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3`
 
 ## Phase 2d — Producer app on Kubernetes
 
-*To be added*
+**Concepts covered:** Kubernetes CronJob, cron syntax, concurrency policies, K8s Secrets, env vars from Secret, image pull policies, non-root containers, version pinning in production code, secret rotation incident response.
+
+### Q1. Why is a CronJob better than a long-running Deployment for periodic tasks?
+
+A Deployment with `while True: sleep(300)` keeps one pod alive permanently. Problems:
+- Memory leaks accumulate forever
+- One unhandled exception kills the whole loop, requiring full restart
+- Pod restarts mean lost in-memory state
+- No native way to handle "skip this cycle if previous still running"
+
+A CronJob spawns a fresh pod for each invocation. Each run is independent. Memory is reclaimed when pods exit. K8s tracks success/failure metrics. The `concurrencyPolicy` field handles "what if a previous run is still going."
+
+The price: slightly higher latency (cold start each time) and slightly more resource usage (pod creation overhead). For schedules slower than ~10 seconds, CronJob is the right choice.
+
+### Q2. What's `concurrencyPolicy` for?
+
+Three values:
+- `Allow` — start a new run even if a previous one is still going. Risky for stateful workloads.
+- `Forbid` — skip the new run if previous still going. Default. Prevents pile-ups.
+- `Replace` — kill the previous run, start the new one. Use when newer data invalidates older work.
+
+For stock data, `Forbid` is correct — if a 5-minute API call is still in progress when the next schedule fires, skip the new run rather than risk duplicate Kafka messages.
+
+### Q3. How do K8s Secrets actually protect credentials?
+
+Secrets are stored in etcd encrypted at rest. They're injected into pods as environment variables (or files), never embedded in Docker images, never appearing in pod specs (visible only via `--show-labels` or RBAC bypass).
+
+The Secret is created once in the cluster. Many pods can reference it. To rotate the credential, update the Secret and restart pods — they pick up the new value at startup.
+
+For higher security in production, use:
+- **Sealed Secrets** (Bitnami) - encrypts the Secret with a cluster-specific public key, safe to commit to git
+- **External Secrets Operator** - syncs from AWS Secrets Manager / Hashicorp Vault / etc.
+- **CSI Secrets Store Driver** - mounts Secrets directly from cloud provider's secret store, no K8s Secret stored in etcd at all
+
+### Q4. What's `envFrom: secretRef` vs explicit `env:` entries?
+
+```yaml
+envFrom:
+  - secretRef:
+      name: alpha-vantage-creds
+```
+
+This injects EVERY key in the Secret as an env var with that key's name. Simpler when the Secret has many keys.
+
+```yaml
+env:
+  - name: RAPIDAPI_KEY
+    valueFrom:
+      secretKeyRef:
+        name: alpha-vantage-creds
+        key: RAPIDAPI_KEY
+```
+
+This is explicit per-key — more code, more control, useful when you want to rename a key or only inject some.
+
+We used `envFrom` because we only have one key in the Secret. Either pattern works.
+
+### Q5. What should I do if I accidentally expose a credential?
+
+1. **Rotate immediately** - the credential is permanently compromised regardless of who you think saw it
+2. **Update wherever it's stored** - K8s Secrets, .env files, password managers, CI/CD systems
+3. **Audit recent activity** on the affected account if the API supports it
+4. **Clean shell history** - `history -c && rm ~/.zsh_history`
+5. **Never paste credentials in chat or screenshots** - even partial ones
+
+This happened to me during Phase 2d: my API key got pasted into a chat session. Rotated immediately, no harm done, but the lesson stuck.
+
+For better workflow next time: pipe stdin to avoid history exposure:
+
+```bash
+read -s KEY  # types invisibly
+echo -n "$KEY" | kubectl create secret generic ... --from-file=RAPIDAPI_KEY=/dev/stdin -n producer
+unset KEY
+```
+
+### Q6. Why did my Docker build fail with "kafka-python-ng==2.2.4 not found"?
+
+Version pinning works only against versions that actually exist on PyPI. I'd guessed at a version (2.2.4) without checking — the latest was 2.2.3. The fix: check the actual published versions before pinning.
+
+Lesson: pin everything for reproducibility, but verify the exact version exists. Better yet, pin to a known-tested version captured by `pip freeze` after a successful local install.
 
 ---
 
