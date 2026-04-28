@@ -285,7 +285,105 @@ Lesson: pin everything for reproducibility, but verify the exact version exists.
 
 ## Phase 2e — Grafana on Kubernetes
 
-*To be added*
+**Concepts covered:** Helm package manager, Helm repos and charts, datasource provisioning, dashboard provisioning, cross-namespace cluster DNS, Helm chart value drift, init containers, secret rotation in practice, declarative vs imperative configuration.
+
+### Q1. What is Helm and when should I use it?
+
+Helm is the Kubernetes package manager - "IKEA for K8s." Instead of writing 12 separate YAML files (Deployment + Service + ConfigMap + ServiceAccount + Role + PVC + ...) for a complex app, you install a Helm chart - a parameterized bundle of resources tested to work together.
+
+**Use Helm when:**
+- Installing complex third-party apps (Grafana, Prometheus, ArgoCD, cert-manager) - the chart handles dozens of resources you don't need to learn
+- Managing many microservices that share patterns - templating prevents copy-paste drift
+- You want declarative version-controlled configuration
+
+**Don't use Helm when:**
+- Learning K8s primitives - raw YAML forces you to understand every resource type
+- The app is simple (one Deployment + Service)
+- You need fine-grained control over every field
+
+For this project, I used raw YAML for Phase 2a-2d to learn K8s primitives. For Grafana, where the K8s primitives weren't novel, Helm saved time.
+
+### Q2. What's datasource provisioning, and why use it?
+
+Grafana stores data sources in its database. Without provisioning, you'd click "Add Data Source -> Postgres -> enter host -> ..." every time the pod restarts (since the database lives on a PVC, this isn't usually needed - but if you ever delete the PVC, it's gone).
+
+Datasource provisioning is declarative: you mount a YAML file at `/etc/grafana/provisioning/datasources/`. Grafana reads it at startup and creates the data source. Now your config is version-controlled, repeatable, GitOps-friendly.
+
+The Helm chart's `datasources` value injects that file directly. So I wrote 15 lines in values.yaml and got a fully-configured Postgres data source on every install.
+
+### Q3. Why did Grafana's init container fail on kind?
+
+Grafana's chart includes `init-chown-data` - an init container that runs `chown -R 472:472 /var/lib/grafana` to ensure the PVC is owned by Grafana's user (UID 472). On real K8s with proper persistent volumes, this works fine.
+
+On kind on Apple Silicon, the volume permissions on the PVC's existing subdirectories (`pdf/`, `png/`, `csv/`) prevent even root from chowning them. The init container exits with `Permission denied`, the main container never starts.
+
+Fix: disable the init container with `initChownData.enabled: false`. Grafana's main container itself runs as user 472, so the chown isn't strictly needed. The init container is "helpful" but not required.
+
+This is a known kind-on-Mac quirk. Production K8s on real hardware doesn't hit this.
+
+### Q4. How does cross-namespace DNS actually work?
+
+K8s gives every Service a stable DNS name following this pattern:
+
+
+So my Postgres Service named `postgres` in namespace `data` is reachable from anywhere in the cluster as `postgres.data.svc.cluster.local`.
+
+When Grafana (running in `monitoring` namespace) needed to reach Postgres (running in `data`), the configuration was just:
+```yaml
+url: postgres.data.svc.cluster.local:5432
+```
+
+K8s' DNS controller (CoreDNS) handles the resolution. Pods in any namespace can talk to Services in any other namespace, as long as NetworkPolicies don't restrict it.
+
+This is one of the most important features of K8s. It's how loosely-coupled microservices can talk to each other reliably even as pods come and go.
+
+### Q5. How should I handle credentials in Helm values.yaml?
+
+Anti-pattern: hardcode passwords in values.yaml committed to git. Anyone who can read the repo gets your credentials.
+
+Better patterns (in increasing order of production-readiness):
+
+1. **Placeholder values + override at deploy** - commit a placeholder in values.yaml, override at deploy time with `--set` flags or a separate `values-secret.yaml` (gitignored).
+
+2. **Reference K8s Secrets** - many Helm charts (like Bitnami's) accept `existingSecret` parameters. The chart references an existing Secret by name; you create the Secret separately.
+
+3. **Sealed Secrets** - encrypt Secrets with a cluster-specific public key. Safe to commit to git. Bitnami sealed-secrets controller decrypts at deploy time.
+
+4. **External Secrets Operator** - sync Secrets from AWS Secrets Manager, HashiCorp Vault, or other external stores. Best for production.
+
+For Phase 2e, I went with #1 (placeholder). For Phase 6 (EKS), I'll switch to External Secrets Operator pulling from AWS Secrets Manager.
+
+### Q6. Why did I have to rotate the Postgres password mid-phase?
+
+I accidentally pasted my Postgres password into chat while debugging. Even though it was a local kind cluster (low real-world risk), I treated it as a credential exposure and rotated.
+
+The rotation procedure:
+1. Generate new password locally (`openssl rand -base64 24`)
+2. Update Postgres user password: `ALTER USER ... WITH PASSWORD ...`
+3. Update K8s Secret: `kubectl create secret ... --dry-run=client -o yaml | kubectl apply -f -`
+4. Update Helm values + helm upgrade
+5. Restart any pods that cached the old password
+
+Critical ordering: change the database password BEFORE the Secret. If you update the Secret first, services would fail to connect with the new password while the database still expects the old one.
+
+### Q7. What's the practical difference between Code Builder vs Code mode in Grafana queries?
+
+- **Builder mode** - UI form for constructing SQL: dropdowns for SELECT columns, WHERE conditions, GROUP BY. Good for non-SQL users, limits flexibility.
+- **Code mode** - raw SQL editor with Grafana macros (`$__timeFilter()`, `$__interval`, `$__from`, `$__to`). Required for anything beyond basic SELECTs.
+
+For complex queries (DISTINCT ON, window functions, CTEs), always use Code mode. Builder breaks down on Postgres-specific syntax.
+
+### Q8. What does `$__timeFilter(timestamp)` actually do?
+
+Grafana macro that injects a time-range WHERE clause based on the dashboard's time picker. It expands to:
+
+```sql
+WHERE timestamp BETWEEN '2026-04-21T00:00:00Z' AND '2026-04-28T00:00:00Z'
+```
+
+(Where the dates come from the dashboard time picker.)
+
+Without it, your queries return ALL data ever, ignoring the dashboard time selector. Always include `$__timeFilter()` in time-series queries.
 
 ---
 
