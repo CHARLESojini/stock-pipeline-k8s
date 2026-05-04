@@ -15,6 +15,7 @@ Topology:
 Database: stock_data (mirrors v1)
 """
 
+import os
 from typing import Dict, List
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import (
@@ -29,9 +30,12 @@ from pyspark.sql.types import (
 # Connection constants — in production these would come from K8s Secrets
 KAFKA_BOOTSTRAP = "stock-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
 KAFKA_TOPIC = "stock_analysis"
-POSTGRES_URL = "jdbc:postgresql://postgres.data.svc.cluster.local:5432/stock_data"
-POSTGRES_USER = "stockuser"
-POSTGRES_PASSWORD = "changeme_in_prod_use_sealed_secrets"
+POSTGRES_HOST = "postgres.data.svc.cluster.local"
+POSTGRES_PORT = 5432
+POSTGRES_DB = "stock_data"
+POSTGRES_URL = f"jdbc:postgresql://{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
+POSTGRES_USER = os.environ.get("POSTGRES_USER", "stockuser")
+POSTGRES_PASSWORD = os.environ["POSTGRES_PASSWORD"]
 
 
 def build_schema() -> StructType:
@@ -71,22 +75,58 @@ def write_raw_to_postgres(batch_df: DataFrame, batch_id: int) -> None:
 
 
 def write_aggregates_to_postgres(batch_df: DataFrame, batch_id: int) -> None:
-    """Persist 1-minute windowed aggregates to 'stocks_aggregates_1m'."""
+    """Upsert 1-minute windowed aggregates to 'stocks_aggregates_1m'.
+
+    Uses INSERT ... ON CONFLICT DO UPDATE for idempotent writes. Streaming
+    jobs may re-process the same window during failure recovery or restart;
+    upsert ensures re-processing produces the same final state without
+    primary-key conflicts.
+    """
     if batch_df.isEmpty():
         return
 
-    (batch_df
-        .write
-        .format("jdbc")
-        .option("url", POSTGRES_URL)
-        .option("dbtable", "stocks_aggregates_1m")
-        .option("user", POSTGRES_USER)
-        .option("password", POSTGRES_PASSWORD)
-        .option("driver", "org.postgresql.Driver")
-        .mode("append")
-        .save())
+    rows = batch_df.collect()
 
-    print(f"[aggregate] Batch {batch_id}: wrote {batch_df.count()} window rows")
+    # psycopg2 imported locally to keep top-level imports for Spark types only
+    import psycopg2
+
+    conn = psycopg2.connect(
+        host=POSTGRES_HOST,
+        port=POSTGRES_PORT,
+        database=POSTGRES_DB,
+        user=POSTGRES_USER,
+        password=POSTGRES_PASSWORD,
+    )
+    try:
+        with conn.cursor() as cur:
+            for row in rows:
+                cur.execute(
+                    """
+                    INSERT INTO stocks_aggregates_1m
+                        (window_start, window_end, symbol, avg_close, min_low, max_high, trade_count)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (window_start, symbol)
+                    DO UPDATE SET
+                        window_end = EXCLUDED.window_end,
+                        avg_close = EXCLUDED.avg_close,
+                        min_low = EXCLUDED.min_low,
+                        max_high = EXCLUDED.max_high,
+                        trade_count = EXCLUDED.trade_count
+                    """,
+                    (
+                        row["window_start"],
+                        row["window_end"],
+                        row["symbol"],
+                        row["avg_close"],
+                        row["min_low"],
+                        row["max_high"],
+                        row["trade_count"],
+                    ),
+                )
+        conn.commit()
+        print(f"[aggregate] Batch {batch_id}: upserted {len(rows)} window rows")
+    finally:
+        conn.close()
 
 
 def main() -> None:
