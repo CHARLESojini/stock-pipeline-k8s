@@ -20,6 +20,9 @@ spec:
     labels:
       version: "3.5.3"
       app: stock-streaming
+    envFrom:
+      - secretRef:
+          name: postgres-secret
   executor:
     cores: 1
     instances: 2
@@ -27,3 +30,6 @@ spec:
     labels:
       version: "3.5.3"
       app: stock-streaming
+    envFrom:
+      - secretRef:
+          name: postgres-secret

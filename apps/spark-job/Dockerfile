@@ -8,6 +8,9 @@ ARG IVY_DIR=/opt/spark/jars
 # Install curl to download JARs at build time
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
+# Install psycopg2 for native Postgres upserts in foreachBatch handlers
+RUN pip install --no-cache-dir psycopg2-binary==2.9.10
+
 # Spark needs Kafka connector + Postgres driver added to its classpath
 RUN curl -L -o ${IVY_DIR}/spark-sql-kafka-0-10_2.12-3.5.3.jar \
     https://repo1.maven.org/maven2/org/apache/spark/spark-sql-kafka-0-10_2.12/3.5.3/spark-sql-kafka-0-10_2.12-3.5.3.jar && \
