@@ -1,0 +1,28 @@
+1. Stock Pipeline deployed to namespace: {{ .Release.Namespace }}
+   Release name: {{ .Release.Name }}
+   Chart version: {{ .Chart.Version }}
+
+2. Components enabled:
+   - Postgres:    {{ .Values.postgres.enabled }}
+   - Kafka:       {{ .Values.kafka.enabled }}
+   - Spark:       {{ .Values.spark.enabled }}
+   - Producer:    {{ .Values.producer.enabled }}
+
+3. Verify deployment:
+
+   kubectl --namespace {{ .Release.Namespace }} get pods
+
+4. Connect to Postgres (after pod is Ready):
+
+   kubectl --namespace {{ .Release.Namespace }} exec -it {{ include "stock-pipeline.fullname" . }}-postgres-0 -- \
+     psql -U {{ .Values.postgres.user }} -d {{ .Values.postgres.database }}
+
+5. View logs from the producer's most recent run:
+
+   kubectl --namespace {{ .Release.Namespace }} logs -l app.kubernetes.io/component=producer --tail=50
+
+6. Note: this chart depends on the following operators being installed CLUSTER-WIDE:
+   - Strimzi Kafka Operator (in the kafka namespace)
+   - Spark Operator (in the spark-operator namespace)
+
+For full setup instructions see: https://github.com/CHARLESojini/stock-pipeline-k8s

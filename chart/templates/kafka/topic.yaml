@@ -1,0 +1,15 @@
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: {{ .Values.kafka.topic.name }}
+  labels:
+    strimzi.io/cluster: {{ .Values.kafka.clusterName }}
+    {{- include "stock-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kafka
+spec:
+  topicName: {{ .Values.kafka.topic.wireName }}
+  partitions: {{ .Values.kafka.topic.partitions }}
+  replicas: {{ .Values.kafka.replicas }}
+  config:
+    retention.ms: {{ .Values.kafka.topic.retentionMs }}
+    segment.bytes: 1073741824

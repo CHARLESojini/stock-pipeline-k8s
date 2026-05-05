@@ -1,0 +1,18 @@
+apiVersion: v2
+name: stock-pipeline
+description: Cloud-native real-time stock market data pipeline on Kubernetes (Postgres + Kafka + Spark + Producer CronJob)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - data-engineering
+  - streaming
+  - kafka
+  - spark
+  - postgres
+home: https://github.com/CHARLESojini/stock-pipeline-k8s
+sources:
+  - https://github.com/CHARLESojini/stock-pipeline-k8s
+maintainers:
+  - name: Chima Ojini
+    url: https://github.com/CHARLESojini

@@ -1,0 +1,39 @@
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: {{ include "stock-pipeline.fullname" . }}-streaming
+  labels:
+    {{- include "stock-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: spark
+spec:
+  type: Python
+  pythonVersion: "3"
+  mode: cluster
+  image: "{{ .Values.global.registry }}/{{ .Values.spark.image.repository }}:{{ .Values.spark.image.tag }}"
+  imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+  mainApplicationFile: local:///opt/spark/app/stock_streaming.py
+  sparkVersion: {{ .Values.spark.sparkVersion | quote }}
+  restartPolicy:
+    type: Never
+  driver:
+    cores: {{ .Values.spark.driver.cores }}
+    memory: {{ .Values.spark.driver.memory | quote }}
+    serviceAccount: {{ include "stock-pipeline.fullname" . }}-spark-driver
+    labels:
+      version: {{ .Values.spark.sparkVersion | quote }}
+      {{- include "stock-pipeline.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: spark
+    envFrom:
+      - secretRef:
+          name: {{ include "stock-pipeline.fullname" . }}-postgres
+  executor:
+    cores: {{ .Values.spark.executor.cores }}
+    instances: {{ .Values.spark.executor.instances }}
+    memory: {{ .Values.spark.executor.memory | quote }}
+    labels:
+      version: {{ .Values.spark.sparkVersion | quote }}
+      {{- include "stock-pipeline.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: spark
+    envFrom:
+      - secretRef:
+          name: {{ include "stock-pipeline.fullname" . }}-postgres

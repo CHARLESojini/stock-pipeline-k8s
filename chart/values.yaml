@@ -1,0 +1,82 @@
+# Default values for stock-pipeline chart.
+# This file structure mirrors the four major components of the platform.
+
+# Global settings shared across components
+global:
+  # Local kind registry by default; override for production
+  registry: localhost:5001
+  # Image pull policy for ALL components
+  imagePullPolicy: Always
+
+# Postgres component
+postgres:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "15"
+  # Storage size for the StatefulSet's PVC
+  storage: 5Gi
+  # Database name (mirrors v1)
+  database: stock_data
+  # Username for the application user
+  user: stockuser
+  # Password should be overridden via --set or external secret
+  # PLACEHOLDER - never commit real password
+  password: PLACEHOLDER_OVERRIDE_AT_DEPLOY
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Kafka component (Strimzi-managed)
+kafka:
+  enabled: true
+  # Kafka cluster name (used in service DNS)
+  clusterName: stock-kafka
+  # Kafka version (must match Strimzi operator support)
+  version: 4.1.0
+  # Number of broker replicas (also acts as controllers in KRaft mode)
+  replicas: 3
+  # Storage per broker
+  storage: 10Gi
+  # Topic configuration
+  topic:
+    name: stock-analysis        # K8s resource name (kebab-case)
+    wireName: stock_analysis    # Wire-level topic name (matches v1)
+    partitions: 6
+    retentionMs: 604800000      # 7 days
+
+# Spark component (Spark Operator managed)
+spark:
+  enabled: true
+  image:
+    repository: stock-streaming
+    tag: v1
+  driver:
+    cores: 1
+    memory: "1g"
+  executor:
+    cores: 1
+    instances: 2
+    memory: "512m"
+  sparkVersion: "3.5.3"
+
+# Producer component (Python CronJob)
+producer:
+  enabled: true
+  image:
+    repository: stock-producer
+    tag: v1
+  schedule: "*/30 * * * *"  # Every 30 minutes
+  # API credentials - PLACEHOLDER, never commit real key
+  rapidapiKey: PLACEHOLDER_OVERRIDE_AT_DEPLOY
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
